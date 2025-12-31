@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -161,7 +162,7 @@ const Admin = () => {
         .from("deposits")
         .select(`
           *,
-          profiles (email)
+          profiles!deposits_user_id_fkey (email)
         `)
         .order("created_at", { ascending: false });
 
@@ -180,7 +181,7 @@ const Admin = () => {
         .from("withdrawals")
         .select(`
           *,
-          profiles (email)
+          profiles!withdrawals_user_id_fkey (email)
         `)
         .order("created_at", { ascending: false });
 
@@ -708,8 +709,29 @@ const Admin = () => {
 
           <TabsContent value="deposits" className="space-y-4">
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Pending Deposits</CardTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    toast({ title: "Backfilling...", description: "Fetching wallet addresses from MyPayVerse" });
+                    try {
+                      const { data, error } = await supabase.functions.invoke("backfill-mypayverse-deposits");
+                      if (error) throw error;
+                      queryClient.invalidateQueries({ queryKey: ["admin-deposits"] });
+                      toast({
+                        title: "Backfill Complete",
+                        description: `Updated ${data.updated} of ${data.total} deposits`,
+                      });
+                    } catch (err: any) {
+                      toast({ title: "Error", description: err.message, variant: "destructive" });
+                    }
+                  }}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Backfill Wallet Addresses
+                </Button>
               </CardHeader>
               <CardContent>
                 {isLoadingDeposits ? (
@@ -722,44 +744,62 @@ const Admin = () => {
                       <TableRow>
                         <TableHead>User Email</TableHead>
                         <TableHead>Amount</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Wallet Address</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Date</TableHead>
                         <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {deposits?.filter(d => d.status === 'pending').map((deposit: any) => (
-                        <TableRow key={deposit.id}>
-                          <TableCell>{deposit.profiles?.email}</TableCell>
-                          <TableCell>${Number(deposit.amount).toFixed(2)}</TableCell>
-                          <TableCell>
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                              {deposit.status}
-                            </span>
-                          </TableCell>
-                          <TableCell>{new Date(deposit.created_at).toLocaleString()}</TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                onClick={() => approveDepositMutation.mutate(deposit.id)}
-                                disabled={approveDepositMutation.isPending}
-                              >
-                                <CheckCircle className="w-4 h-4 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => setRejectDepositDialog({ open: true, depositId: deposit.id })}
-                              >
-                                <XCircle className="w-4 h-4 mr-1" />
-                                Reject
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {deposits?.filter(d => d.status === 'pending').map((deposit: any) => {
+                        const isMyPayVerse =
+                          deposit.transaction_hash?.startsWith('mypayverse_') ||
+                          deposit.admin_wallet_address === 'MyPayVerse';
+
+                        return (
+                          <TableRow key={deposit.id}>
+                            <TableCell>{deposit.profiles?.email}</TableCell>
+                            <TableCell>${Number(deposit.amount).toFixed(2)}</TableCell>
+                            <TableCell>
+                              {isMyPayVerse ? (
+                                <Badge className="bg-blue-500 hover:bg-blue-600 text-white">MyPayVerse</Badge>
+                              ) : (
+                                <Badge variant="secondary">Manual</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {deposit.admin_wallet_address || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                {deposit.status}
+                              </span>
+                            </TableCell>
+                            <TableCell>{new Date(deposit.created_at).toLocaleString()}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => approveDepositMutation.mutate(deposit.id)}
+                                  disabled={approveDepositMutation.isPending}
+                                >
+                                  <CheckCircle className="w-4 h-4 mr-1" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => setRejectDepositDialog({ open: true, depositId: deposit.id })}
+                                >
+                                  <XCircle className="w-4 h-4 mr-1" />
+                                  Reject
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
@@ -776,29 +816,49 @@ const Admin = () => {
                     <TableRow>
                       <TableHead>User Email</TableHead>
                       <TableHead>Amount</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Wallet Address</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Date</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {deposits?.map((deposit: any) => (
-                      <TableRow key={deposit.id}>
-                        <TableCell>{deposit.profiles?.email}</TableCell>
-                        <TableCell>${Number(deposit.amount).toFixed(2)}</TableCell>
-                        <TableCell>
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            deposit.status === 'approved' 
-                              ? 'bg-green-100 text-green-800' 
-                              : deposit.status === 'rejected'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-yellow-100 text-yellow-800'
-                          }`}>
-                            {deposit.status}
-                          </span>
-                        </TableCell>
-                        <TableCell>{new Date(deposit.created_at).toLocaleString()}</TableCell>
-                      </TableRow>
-                    ))}
+                    {deposits?.map((deposit: any) => {
+                      const isMyPayVerse =
+                        deposit.transaction_hash?.startsWith('mypayverse_') ||
+                        deposit.admin_wallet_address === 'MyPayVerse';
+
+                      return (
+                        <TableRow key={deposit.id}>
+                          <TableCell>{deposit.profiles?.email}</TableCell>
+                          <TableCell>${Number(deposit.amount).toFixed(2)}</TableCell>
+                          <TableCell>
+                            {isMyPayVerse ? (
+                              <Badge className="bg-blue-500 hover:bg-blue-600 text-white">MyPayVerse</Badge>
+                            ) : (
+                              <Badge variant="secondary">Manual</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {deposit.admin_wallet_address || '-'}
+                          </TableCell>
+                          <TableCell>
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                deposit.status === 'approved'
+                                  ? 'bg-green-100 text-green-800'
+                                  : deposit.status === 'rejected'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-yellow-100 text-yellow-800'
+                              }`}
+                            >
+                              {deposit.status}
+                            </span>
+                          </TableCell>
+                          <TableCell>{new Date(deposit.created_at).toLocaleString()}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>

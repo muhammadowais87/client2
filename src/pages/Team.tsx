@@ -130,17 +130,9 @@ const Team = () => {
     refetchInterval: 5000
   });
 
-  // Calculate direct referral earnings (Level 1 only)
-  const directReferralEarnings = referrals?.filter(r => r.level === 1).reduce((total, ref) => {
-    const profile = ref.profiles;
-    if (profile) {
-      // 10% of deposits + 10% of profits (capped at $30 per cycle, approximated as 10% of total_profit)
-      const depositCommission = (profile.total_deposits || 0) * 0.10;
-      const profitCommission = Math.min((profile.total_profit || 0) * 0.10, 30 * Math.ceil((profile.total_profit || 0) / 100)); // Approximate cap
-      return total + depositCommission + profitCommission;
-    }
-    return total;
-  }, 0) || 0;
+  // Note: Actual earnings are tracked in the database (referral_earnings_history table)
+  // and displayed via profile.total_direct_earnings (referral bonus from deposits)
+  // and profile.total_referral_earnings (team earnings from cycle profits)
 
   // Fetch unlocked referral levels
   const {
@@ -419,11 +411,11 @@ const Team = () => {
           </div>
           <div className="bg-primary-foreground/10 rounded-xl p-3">
             <p className="text-xs opacity-90 mb-1">Referral Bonus</p>
-            <p className="text-xl font-bold text-green-300">${Number(profile?.total_direct_earnings || 0).toFixed(2)}</p>
+            <p className="text-xl font-bold text-green-300">${Number(profile?.direct_earnings_balance || 0).toFixed(2)}</p>
           </div>
           <div className="bg-primary-foreground/10 rounded-xl p-3">
             <p className="text-xs opacity-90 mb-1">Team Earnings</p>
-            <p className="text-xl font-bold">${Number(profile?.total_referral_earnings || 0).toFixed(2)}</p>
+            <p className="text-xl font-bold">${Number(profile?.referral_balance || 0).toFixed(2)}</p>
           </div>
         </div>
       </div>
@@ -563,7 +555,7 @@ const Team = () => {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary font-bold">•</span>
-              <span>Earn commission when your downline completes cycleand makes cycle profits<strong className="text-foreground">cycle profits</strong></span>
+              <span>Earn commission when your downline completes a cycle and earns <strong className="text-foreground">cycle profits</strong></span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-amber-500 font-bold">⚠️</span>
@@ -635,14 +627,14 @@ const Team = () => {
           </div>
           
           {(() => {
-          // Active = users who have made deposits, Inactive = users with no deposits
+          // Active = users who have made deposits (depositors), Inactive = users with no deposits
           const activeMembers = filteredReferrals?.filter(r => (r.profiles?.total_deposits || 0) > 0) || [];
           const inactiveMembers = filteredReferrals?.filter(r => (r.profiles?.total_deposits || 0) === 0) || [];
           return <Tabs defaultValue="all" className="w-full">
                 <TabsList className="grid w-full grid-cols-4 mb-2">
                   <TabsTrigger value="all">All ({filteredReferrals?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="active" className="text-success">Active ({activeMembers.length})</TabsTrigger>
-                  <TabsTrigger value="inactive">Inactive ({inactiveMembers.length})</TabsTrigger>
+                  <TabsTrigger value="active" className="text-success">Depositors ({activeMembers.length})</TabsTrigger>
+                  <TabsTrigger value="inactive">No Deposit ({inactiveMembers.length})</TabsTrigger>
                   <TabsTrigger value="levels">By Level</TabsTrigger>
                 </TabsList>
 
@@ -741,9 +733,21 @@ const Team = () => {
                     <p className="text-sm font-medium text-foreground">
                       {fullName}
                     </p>
-                    <Badge variant={hasActiveCycle ? "default" : "secondary"} className="text-xs">
-                      {hasActiveCycle ? "Active" : "Inactive"}
-                    </Badge>
+                    {/* Show Depositor badge based on deposits, Trading badge if has active cycle */}
+                    {(referral.profiles?.total_deposits || 0) > 0 ? (
+                      <Badge variant="default" className="text-xs bg-green-600">
+                        Depositor
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-xs">
+                        No Deposit
+                      </Badge>
+                    )}
+                    {hasActiveCycle && (
+                      <Badge variant="outline" className="text-xs bg-blue-500/20 border-blue-500/30 text-blue-400">
+                        Trading
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     <span className="font-mono">{displayUserId}</span>
