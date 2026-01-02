@@ -127,17 +127,46 @@ const Wallet = () => {
       walletAddress: string;
     }) => {
       if (!userId) throw new Error("Not authenticated");
-      const {
-        error
-      } = await supabase.from("withdrawals").insert({
+      
+      // Calculate net amount after 15% tax - store NET amount in database
+      const taxRate = 0.15;
+      const netAmount = amount * (1 - taxRate);
+      
+      // Check available balance (wallet + referral)
+      const totalAvailable = (profile?.wallet_balance || 0) + (profile?.referral_balance || 0);
+      if (totalAvailable < amount) {
+        throw new Error("Insufficient balance");
+      }
+      
+      // Deduct from user's balance immediately when they apply for withdrawal
+      let remainingToDeduct = amount;
+      const walletDeduction = Math.min(profile?.wallet_balance || 0, remainingToDeduct);
+      remainingToDeduct -= walletDeduction;
+      const referralDeduction = remainingToDeduct;
+      
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          wallet_balance: (profile?.wallet_balance || 0) - walletDeduction,
+          referral_balance: (profile?.referral_balance || 0) - referralDeduction,
+          total_withdrawals: (profile?.total_withdrawals || 0) + amount,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", userId);
+      
+      if (updateError) throw updateError;
+      
+      // Insert withdrawal record with NET amount
+      const { error } = await supabase.from("withdrawals").insert({
         user_id: userId,
-        amount,
+        amount: netAmount, // Store NET amount (what user will receive)
         wallet_address: walletAddress,
         status: "pending"
       });
       if (error) throw error;
+      return { originalAmount: amount, netAmount };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({
         queryKey: ["withdrawals", userId]
       });
@@ -146,7 +175,7 @@ const Wallet = () => {
       });
       toast({
         title: "Withdrawal Requested",
-        description: "Your withdrawal will be processed within 2-3 hours."
+        description: `You will receive $${data.netAmount.toFixed(2)} after 15% tax. Processing time: 24 hours.`
       });
       setWithdrawAmount("");
       setWithdrawAddress("");
@@ -465,7 +494,7 @@ const Wallet = () => {
             <Button variant={transferDirection === "to-cycle" ? "default" : "outline"} size="sm" onClick={() => setTransferDirection("to-cycle")} className="flex-1">
               Main → Cycle
             </Button>
-            <Button variant={transferDirection === "to-main" ? "default" : "outline"} size="sm" onClick={() => setTransferDirection("to-main")} className="flex-1" disabled={hasActiveCycles}>
+            <Button variant={transferDirection === "to-main" ? "default" : "outline"} size="sm" onClick={() => setTransferDirection("to-main")} className="flex-1">
               Cycle → Main
             </Button>
           </div>
